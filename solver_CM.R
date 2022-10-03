@@ -1,11 +1,11 @@
 rm(list=ls())
-
+setwd("~/codes/rpspm")
 require(deSolve)
 
 #### Load model ####
 
 # source("codes/pspm_package/Rscripts/wave_model.R")
-source("codes/pspm_package/Rscripts/test_model.R")
+source("test_model.R")
 
 
 #### CM core ####
@@ -37,15 +37,27 @@ addCohort <- function(u,x,t,E){
   }
   
   # Iterate to solve for f(u0)=u0
-  u0 = 10
+  u0 = u[1]
   err=100
-  while(err > 1e-4){
-    cat(".")
+  cat(" >> ")
+  while(err > 1e-6){
+    cat("",u0,"->")
     u1 = f(u0,x,t)
     err = abs(u1-u0)
     u0 = u1
   }
-  cat("\n")
+  cat("u0 = ", u0, "\n")
+
+  insert_lower = T
+  # return the result
+  if (insert_lower){
+    x = c(xb,x)
+    u = c(u0,u)
+  }
+  else{
+    x = c(x,xm)
+    u = c(u,u0)
+  }
   
   # remove most crowded cohort
   J = length(x)
@@ -64,15 +76,7 @@ addCohort <- function(u,x,t,E){
   #   x = x[-id]
   #   u = u[-id]
   # }
-  
-  insert_lower = T
-  # return the result
-  if (insert_lower){
-    c(xb,x,u0,u)
-  }
-  else{
-    c(x,xm,u,u0)
-  }
+  c(x,u)  
 }
 
 
@@ -95,15 +99,16 @@ J = 25
 xb = 0
 xm = 1
 
-schedule = seq(0,8,0.01)  # New cohort introduction times
+schedule = seq(0,8,.02)  # New cohort introduction times <-- gives wrong u0_eq. Reducing introduction step to 0.01 gives correct solution. Maybe adaptive solver will solve this problem.
 
-x = seq(xb, xm, length.out=J+1) # seq(0,1, length.out=J+1)
+x = seq(0,1, length.out=J+1)
+x2 = x
 u0 = c(x, calcIC(x))
 
-plot(x=1, y=NA, xlim=c(0,1), ylim=c(0,2), xlab="Size", ylab="Density", main="CM")
+plot(x=1, y=NA, xlim=c(0,1), ylim=c(0,2), xlab="Size", ylab="Density", main="EBT")
 # plot(x=1, y=NA, xlim=c(0,100), ylim=c(0,1))
 for (i in 1:(length(schedule)-1)){
-  ut = lsoda(u0, c(schedule[i],schedule[i+1]), func_CM, par=0, rtol=1e-6, atol=1e-6, hmax=1)
+  ut = lsoda(u0, c(schedule[i],schedule[i+1]), func_CM, par=0, rtol=1e-6, atol=1e-6)
   y = ut[2,-1]
 
   # y = u0 + unlist(func_CM(schedule[i+1], u0, 0))*(schedule[i+1]-schedule[i])
@@ -117,16 +122,16 @@ for (i in 1:(length(schedule)-1)){
   cat(schedule[i+1],"\n")
   u0 = addCohort(u1,x1,schedule[i+1],calcEnv_CM(x1,u1))
   
-  if (i %% 50 == 0){
+  if (i %% 10 == 0){
     n = length(u0)/2
     x = u0[1:n]
     u = u0[(n+1):(2*n)]
-    points(u~x, type="l", col=colorRampPalette(c(rgb(1,0,0,0.5),rgb(0,0,1,0.5)),alpha=T)(length(schedule))[i])
+    points(u~x, type="l", pch=20, col=colorRampPalette(c(rgb(1,0,0,0.5),rgb(0,0,1,0.5)),alpha=T)(length(schedule))[i])
   }
 }
-x1 = seq(0,1, by=0.01)
-points(x=x1, y=calcIC(x1), col="grey", type="l", lwd=1)
-points(x=x1, y=Ueq(x1), col="green3", type="l", lwd=3)
+
+points(x=x2, y=calcIC(x2), col="grey", type="l", lwd=1)
+points(x=x2, y=Ueq(x2), col="green3", type="l", lwd=3)
 points(u~x, col="blue", pch=20)
 
 

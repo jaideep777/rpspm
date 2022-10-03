@@ -1,79 +1,66 @@
+require(pracma)
+
 #### ~~~~~ Model description ~~~~~~~~~~~ ####
 
 calcIC <- function(x){
-  IC = (1-x)^2/(1+x)^4 + (1-x)/(1+x)^3
+  IC = 100/x^4
+  
+  IC
 }
 
 growthRate = function(x,t,E){
-  a = 0.16+0.22*exp(-0.225*t*t)
-  g = 0.225*(1-x*x)*(E/(1+E*E))*t*(1+a*a)/a
+  g = 0.0838*x^0.7134
   g
 }
 
 mortalityRate = function(x,t,E){
-  a = 0.16+0.22*exp(-0.225*t*t)
-  m = 1.35*t*E/a
+  m = 0.035
   rep(m, length(x))
 }
 
 # Note: total flux of newborns is calculated in the solver as
 #       g(xb,E)u(xb,t) = integral(birthRate(x,t,E)*u(x,t))
 birthRate = function(x,t,E){
-  a = 0.16+0.22*exp(-0.225*t*t)
-  oneplusa = 1.16+0.22*exp(-0.225*t*t)
-  n1 = 0.225*t*x*x*(1-x)*(1-x)*E/(1+E)/(1+E)*oneplusa*oneplusa/a
-  n2 = (1+exp(-0.225*t*t))/(61-88*log(2)+(38*log(2)-79.0/3)*exp(-0.225*t*t))
-  n1*n2
+  0.1/0.9*0.0838*x^0.7134*(1-E)
 }
 
 calcEnv <- function(x,U){
+  X = x[-1]-diff(x)/2         
   h = diff(x)
-  x = x[-1]-diff(x)/2
-  
-  w = (2-3*x)^3 * (54*x^2 - 27*x +4)
-  w[which(x <= 1/3)] = 1
-  w[which(x >  2/3)] = 0
-  
-  # w = w[-1]-diff(w)/2
-  
-  E = sum(h*w*U)
+  E=min(sum(0.646*X^0.749*U*h/10000),1)
+  # print(E)
   E
 }
 
 calcEnv_CM <- function(x,u){
-  # ub=2
-  x = c(xb, x)
   w = (2-3*x)^3 * (54*x^2 - 27*x +4)
   w[which(x <= 1/3)] = 1
   w[which(x >  2/3)] = 0
-
+  
   if (length(x) < 2){
     E = 0
   }
   else{
-    E = integrate_trapezium(x, w*c(B,u))
+    E = integrate_trapezium(x, w*u)
   }
   E
 }
 
-calcEnv_EBT <- function(pi0,xint,N0,Nint){
-  x0 = xb+pi0/(N0+1e-12)
-  
-  x = c(x0, xint)
-  N = c(N0, Nint)
-  
-  w = (2-3*x)^3 * (54*x^2 - 27*x +4)
-  w[which(x <= 1/3)] = 1
-  w[which(x >  2/3)] = 0
-  
-  E = sum(w*N)
-  E
-}
-
-
 # Analytical calculation of equilibrium distribution, if available
 Ueq = function(x){
-  (1-x)^2/(1+x)^4
+  a0<- 0.396
+  phiA<- 0.749
+  g0<-0.0838
+  phiG<-0.7134
+  m0<-1
+  mort<-0.035
+  mu0<-mort*m0/g0
+  alpha<-0.10
+  temp<- mu0/(1-phiG)
+  coverage<-1-(1-alpha)/alpha*mu0/((mu0/(1-phiG))^(phiG/(phiG-1))*exp(mu0/(1-phiG))*as.numeric(gammainc(mu0/(1-phiG),phiG/(1-phiG)+1)[2]))
+  Neq<-coverage/a0/(temp^(phiA/(phiG-1))*exp(temp)*as.numeric(gammainc(temp,phiA/(1-phiG)+1))[2])
+  n0<-Neq*mort/g0
+  return(n0*(x/m0)^(-phiG)*exp(mu0/(1-phiG)*(1-(x/m0)^(1-phiG)))*10000)
 }
 
 

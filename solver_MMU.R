@@ -5,8 +5,9 @@ require(limSolve)
 
 #### Load model ####
 
-# source("codes/pspm_package/Rscripts/wave_model.R")
-source("codes/pspm_package/Rscripts/test_model.R")
+# source("wave_model.R")
+source("test_model.R")
+# source("RED_model_v2.R")
 
 
 #### FMU core ####
@@ -25,7 +26,7 @@ calc_dU_MMU <- function(U, x, uprev, t, E){
   
   birthFlux = sum(birthArray*U*h)
   
-  dx = calc_dx_MMU(x,uprev)
+  dx = calc_dx_MMU(x,uprev, t)
 
   u = numeric(J+1)
 
@@ -53,8 +54,7 @@ calc_dU_MMU <- function(U, x, uprev, t, E){
     # dU[i] = -mortalityArray[i]*U[i] - (growthArray[i+1]*u[i+1] - growthArray[i]*u[i])/h[i]
     dU[i] = -mortalityArray[i]*U[i] - ((growthArray[i+1]-dx[i+1])*u[i+1] - (growthArray[i]-dx[i])*u[i])/h[i] - (dx[i+1]-dx[i])*U[i]/h[i]
   }
-  # cat("du=", dU, "\n")
-
+  
   list(u=u, rates=c(dx,dU))
 }
 
@@ -70,46 +70,71 @@ monitor = function(i, x, u, regularizingFactor){
   # z1
 }
 
-
-calc_dx_MMU = function(x,u){
-  factor = sum(diff(u)^2/diff(x))/(xm-xb)
-  a = numeric(J+1)
-  b = numeric(J+1)
-  c = numeric(J+1)
-  d = numeric(J+1)
-  b[1] = 1
-  b[J+1] = 1 
+par(mfrow=c(2,1), mar=c(4,4,1,1))
+calc_dx_MMU = function(x,u,t){
+  # cat(diff(x), "\n")
   
+  factor = sum(diff(u)^2/diff(x))/(xm-xb)
+  # cat("factor=", factor, "\n")
+
   rho1 = sapply(X = 1:J, FUN = monitor, x=x,u=u,regularizingFactor=factor)
+  rho1 = c(rho1,1)
+  # if(as.integer(t*100) %% 10 == 0){
+  #   plot(uprev~x, main=t)
+  #   plot(diff(x))
+  # }
+  
+  # cat(rho1,"\n")
   pm=4
   gamma=2
-  rho = rho1
-  for(i in (1):(J)){
-    p = min(i-1, pm, J-i)
+  rho = numeric(J+1)
+  for(i in (1):(J+1)){
+    p = min(i-1, pm, J+1-i)
     weights = (gamma/(1+gamma))^(abs(-p:p))
     rho[i] = sqrt(sum(rho1[(i-p):(i+p)]^2*weights)/sum(weights))
   }
   
+  a = numeric(J+1)
+  b = numeric(J+1)
+  c = numeric(J+1)
+  d = numeric(J+1)
   for (i in 2:(J)){
     rhoMinus = (rho[i-1]+rho[i])/2
-    if (i < J){
-      rhoPlus = (rho[i+1]+rho[i])/2
-    }else{
-      rhoPlus = rho[i]
-    }
+    rhoPlus  = (rho[i+1]+rho[i])/2
     rightSide = -(1/tau)*(rhoPlus*(x[i+1]-x[i]) - rhoMinus*(x[i]-x[i-1]));
     a[i] = rhoMinus;
     b[i] = -(rhoMinus + rhoPlus);
     c[i] = rhoPlus;
     d[i] = rightSide;
   }
+  b[1] = 1
+  b[J+1] = 1 
+  
   # cat(c,"\n")
   # dx = rep(0,J+1) 
   dx = as.numeric(Solve.tridiag(a[-1], b, c[-(J+1)], d))
+  # dx[1]=0
+  # cat("dx boundary: ", dx[1], dx[length(dx)], "\n")
+  
+  assertthat::are_equal(dx[length(dx)], 0)
+  
+  if(any(diff(x)<0)) {
+    cat(rho1,"\n")
+    cat(x,"\n")
+    cat(diff(x),"\n")
+    plot(u~x)
+    plot(dx~x)
+    abline(h=0, v=x, col="grey")
+    plot(rho1~x)
+    stop("diff(x)<0")
+  }
+  
   dx
 }
 
+
 func <- function(t, y, par){
+  # cat(t, "\n")
   x = y[1:(J+1)]
   U = y[(J+2):length(y)]
 
@@ -117,7 +142,7 @@ func <- function(t, y, par){
 
   dxdU = calc_dU_MMU(U,x,uprev,t,E)  
   
-  uprev = dxdU$u
+  uprev <<- dxdU$u   # Assign to global variable
   list(dU=dxdU$rates)
 }
 
@@ -126,7 +151,8 @@ func <- function(t, y, par){
 J = 25                          # Number of grid cells
 xb = 0                          # Minimum size (size at birth)
 xm = 1                          # Maximum size (size at maturity)
-x = seq(xb, xm, length.out=J+1) # grid edges
+x = (seq((xb), (xm), length.out=J+1)) # grid edges
+x1 = x
 X = x[-1]-diff(x)/2             # grid centers
 # h = diff(x)                     # grid widths
 tau = 1
@@ -135,22 +161,35 @@ mids = function(x){
   x[-1]-diff(x)/2
 }
 
+
 # if logarithmiz grid desired:
 #x = c(xb, exp(seq(log(xb+0.01), log(xm), length.out=J))) # seq(0,1, length.out=J+1)
 
 U = calcIC(X)
 uprev = calcIC(x)
 
-Y = lsoda(c(x,U), seq(0,10,length.out=20), func, par=0, rtol=1e-4, atol=1e-4)
+# Y = lsoda(c(x,U), seq(0,5,length.out=20), func, par=0, rtol=1e-4, atol=1e-4)
 
-plot(x=mids(Y[1,2:(J+2)]), y=Y[1,(J+3):(2*J+2)], col="red", type="l",ylim=c(0,2), xlim=c(0,1), xlab="Size", ylab="Density", main="MMU")
-for(i in 2:20){
-  points(x=mids(Y[i,2:(J+2)]), y=Y[i,(J+3):(2*J+2)], col=colorRampPalette(c(rgb(1,0,0,0.5),rgb(0,0,1,0.5)),alpha=T)(20)[i], type="l")
+Y = NULL
+y = c(x,U)
+dt = .02
+times = seq(0,by=dt, length.out=200)
+for (i in 1:200){
+  cat(i, "\n")
+  y = y + func(times[i],y,0)$dU*dt
+  Y = rbind(Y, c(times[i],y))
 }
-points(x=seq(0,1,.02), y=Ueq(seq(0,1,.02)), col="green3", type="l", lwd=3)
+
+plot(x=mids(Y[1,2:(J+2)]), y=Y[1,(J+3):(2*J+2)], col="red", type="l",ylim=c(0,2), xlim=c(0,1), xlab="Size", ylab="Density", main="MMU", log="")
+for(i in seq(2,nrow(Y),by=1000)){
+  points(x=mids(Y[i,2:(J+2)]), y=Y[i,(J+3):(2*J+2)], col=colorRampPalette(c(rgb(1,0,0,0.5),rgb(0,0,1,0.5)),alpha=T)(nrow(Y))[i], type="l")
+}
+points(x=x1, y=Ueq(x1), col="green3", type="l", lwd=3)
 points(x=mids(Y[1,2:(J+2)]), y=Y[1,(J+3):(2*J+2)], col="red", pch=20)
-points(x=mids(Y[20,2:(J+2)]), y=Y[20,(J+3):(2*J+2)], col="blue", pch=20)
-abline(v=mids(Y[20,2:(J+2)]), col="grey")
+points(x=mids(Y[nrow(Y),2:(J+2)]), y=Y[nrow(Y),(J+3):(2*J+2)], col="blue", pch=20)
+abline(v=(Y[nrow(Y),2:(J+2)]), col="grey")
+xfinal = Y[nrow(Y),2:(J+2)]
+points(y=diff(xfinal)*30, x=mids(xfinal))
 
 # matplot(x=X, y=t(Y[,-1]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(20))
 # points(x=X, y=Y[1,-1], col="grey", type="l", lwd=2)

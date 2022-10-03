@@ -1,0 +1,189 @@
+rm(list=ls())
+
+require(deSolve)
+
+#### Load model ####
+
+# source("codes/pspm_package/Rscripts/wave_model.R")
+# source("RED_model_v2.R")
+# source("test_model.R")
+
+
+#### FMU core ####
+phi <- function(rr){
+  sapply(X = rr, FUN = function(r){max(max(0.0,min(2*r,1.0)),min(r,2.0))})
+}
+
+calc_dU_FMU <- function(U, x, t, E, B){
+  X = x[-1]-diff(x)/2             # grid centers
+  h = diff(x)
+  
+  birthArray = birthRate(X,t,E)
+  growthArray = growthRate(x,t,E)
+  mortalityArray = mortalityRate(X,t,E)
+  
+  birthFlux = sum(birthArray*U*h)
+  u0 = birthFlux/(growthArray[1]+1e-12)
+  u = numeric(J+1)
+  
+  u[1] = B 
+  cat(t, " ", u[1], "->", u0, "\n")
+  u[2] = 2*U[1]-u[1] # Calc with trapezoildal rule. But for g(x)<0, This could be calc with upwind scheme
+  
+  for (i in 3:(J-1)){
+    if(growthArray[i] >=0){ # needs U @ i-2, i-1, i
+      rMinus = (((U[i]-U[i-1])/(x[i]-x[i-1]))/((U[i-1]-U[i-2]+1e-12)/(x[i-1]-x[i-2])))
+      u[i] = U[i-1] + phi(rMinus)*(U[i-1]-U[i-2])*(x[i]-x[i-1])/(x[i+1]-x[i-1])
+    }
+    else{ # needs U @ i-1, i, i+1
+      rPlus  = ((U[i]-U[i-1])/(x[i]-x[i-1]))/((U[i+1]-U[i]+1e-12)/(x[i+1]-x[i]));
+      u[i] = U[i] - phi(rPlus)*(U[i+1]-U[i])*(x[i+1]-x[i])/(x[i+2]-x[i]);
+    }
+    # u[i] = 2*U[i-1] - u[i-1]
+  }
+  # for (i in 3:(J-1)){
+  #   if(growthArray[i] >=0){ # needs U @ i-2, i-1, i
+  #     rMinus = (((U[i]-U[i-1])/(X[i]-X[i-1]))/((U[i-1]-U[i-2]+1e-12)/(X[i-1]-X[i-2])))
+  #     u[i] = U[i-1] + phi(rMinus)*(U[i-1]-U[i-2])*(X[i]-X[i-1])/(X[i+1]-X[i-1])
+  #   }
+  #   else{ # needs U @ i-1, i, i+1
+  #     rPlus  = ((U[i]-U[i-1])/(X[i]-X[i-1]))/((U[i+1]-U[i]+1e-12)/(X[i+1]-X[i]));
+  #     u[i] = U[i] - phi(rPlus)*(U[i+1]-U[i])*(X[i+1]-X[i])/(X[i+2]-X[i]);
+  #   }
+  #   # u[i] = 2*U[i-1] - u[i-1]
+  # }
+  
+  
+  u[J] = 2*U[J-1] - u[J-1] # For g(x)>0, This could be calc with upwind scheme
+  u[J+1] = 2*U[J] - u[J] # Calc with trapezoidal rule 
+  
+  dU = numeric(J)
+  for (i in 1:J){
+    # dU[i] = -mortalityArray[i]*U[i] - (growthArray[i+1]*u[i+1] - growthArray[i]*u[i])/h[i]
+    dU[i] = -mortalityArray[i]*U[i] - (growthArray[i+1]*u[i+1] - growthArray[i]*u[i])/h[i]
+  }
+  # cat("du=", dU, "\n")
+  
+  dU
+}
+
+
+
+func <- function(t, U, par){
+  E = calcEnv(x, U)
+  dU = calc_dU_FMU(U,x,t,E, par)  
+  
+  list(dU=dU)
+}
+
+
+#### Solve PSPM ####
+# 
+# J = 25                          # Number of grid cells
+# xb = 0                        # Minimum size (size at birth)
+# xm = 1                         # Maximum size (size at maturity)
+# # if logarithmiz grid desired:
+# # x = exp(seq(log(xb), log(xm), length.out=J+1)) # seq(0,1, length.out=J+1)
+# x = seq(xb, xm, length.out=J+1) # grid edges
+# X = x[-1]-diff(x)/2             # grid centers
+# h = diff(x)                     # grid widths
+# 
+# 
+# U = calcIC(X)
+# 
+# # calcEnv(x,U)
+# # 
+# Y = lsoda(U, seq(0,8,0.05), func, par=2, rtol=1e-5, atol=1e-5)
+# # 
+# matplot(x=X, y=t(Y[,-1]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(20), xlab="Size", ylab="Density", main="FMU")
+# points(x=X, y=Y[1,-1], col="grey", type="l", lwd=2)
+# points(x=x, y=Ueq(x), col="green3", type="l", lwd=3)
+# points(x=X, y=Y[nrow(Y),-1], col="blue", pch=20, cex=1)
+# abline(v=X, col="grey")
+
+
+# 
+# 
+# Y = NULL
+# y = c(U)
+# dt = .02
+# times = seq(0,by=dt, length.out=400)
+# for (i in 1:400){
+#   cat(i, "\n")
+#   y = y + func(times[i],y,0)$dU*dt
+#   Y = rbind(Y, c(times[i],y))
+# }
+# 
+# matplot(x=X, y=t(Y[seq(1,400,by=20),-1]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(20), xlab="Size", ylab="Density", main="FMU")
+# points(x=X, y=Y[1,-1], col="grey", type="l", lwd=2)
+# points(x=x, y=Ueq(x), col="green3", type="l", lwd=3)
+# points(x=X, y=Y[nrow(Y),-1], col="blue", pch=20, cex=1)
+# abline(v=X, col="grey")
+
+
+
+#### Solve PSPM ####
+source("RED_model_v2.R")
+J = 30                          # Number of grid cells
+xb = 1                        # Minimum size (size at birth)
+xm = 1e4                         # Maximum size (size at maturity)
+# if logarithmiz grid desired:
+x = exp(seq(log(xb), log(xm), length.out=J+1)) # seq(0,1, length.out=J+1)
+# x = seq(xb, xm, length.out=J+1) # grid edges
+X = x[-1]-diff(x)/2             # grid centers
+h = diff(x)                     # grid widths
+
+
+U = calcIC(X)
+
+Y = lsoda(U, seq(0,5000,length.out=20), func, par=0, rtol=1e-5, atol=1e-5)
+
+# Y = NULL
+# y = c(U)
+# times = seq(0,by=0.01, length.out=600)
+# for (i in 1:600){
+#   y = y + func(times[i],y,0)$dU*0.01
+#   Y = rbind(Y, c(times[i],y))
+# }
+
+matplot(x=X, y=t(Y[,-1]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(20), xlab="Size", ylab="Density", main="FMU", log="xy")
+points(x=X, y=Y[1,-1], col="grey", type="l", lwd=2)
+points(x=x, y=Ueq(x), col="green3", type="l", lwd=3)
+points(x=X, y=Y[nrow(Y),-1], col="blue", pch=20, cex=1)
+abline(v=X, col="grey")
+
+# 
+# source("codes/rpspm/RED_model_v2.R")
+# J = 30                          # Number of grid cells
+# xb = 1                        # Minimum size (size at birth)
+# xm = 1e6                         # Maximum size (size at maturity)
+# # if logarithmiz grid desired:
+# x = exp(seq(log(xb), log(xm), length.out=J+1)) # seq(0,1, length.out=J+1)
+# X = x[-1]-diff(x)/2             # grid centers
+# h = diff(x)                     # grid widths
+# 
+# U = calcIC(X)
+# Y = read.delim("codes/pspm_package/demo/RED_model/fmu_Redmodel.txt", header = F)
+# Y = Y[,-ncol(Y)]
+# matplot(x=X, y=t(Y[,-c(1,2)]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(nrow(Y)), xlab="Size", ylab="Density", main="FMU", log="xy")
+# points(x=X, y=Y[1,-c(1,2)], col="grey", type="l", lwd=2)
+# points(x=X, y=Ueq(X), col="green3", type="l", lwd=3)
+# points(x=X, y=Y[nrow(Y),-c(1,2)], col="blue", pch=20, cex=1)
+# abline(v=X, col="grey")
+# 
+# U = calcIC(X)
+# Y = read.delim("codes/pspm_package/demo/RED_model/ebt_Redmodel.txt", header = F)
+# Y = Y[,-ncol(Y)]
+# matplot(x=X, y=t(Y[,-c(1,3)]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(nrow(Y)), xlab="Size", ylab="Density", main="FMU", log="xy")
+# points(x=X, y=Y[1,-c(1,3)], col="grey", type="l", lwd=2)
+# points(x=X, y=Ueq(X), col="green3", type="l", lwd=3)
+# points(x=X, y=Y[nrow(Y),-c(1,3)], col="blue", pch=20, cex=1)
+# abline(v=X, col="grey")
+#   
+
+Y = read.delim("~/codes/pspm_package/ifmu_testmodel.txt", header=F)
+x=seq(0,1,length.out=30)
+matplot(x=x[-length(x)], y=t(Y[,2:length(x)+1]), type = "l", lty=1, col=colorRampPalette(colors = c(rgb(1,0,0,0.5), rgb(0,0,1,0.5)), alpha=T)(160), xlab="Size", ylab="Density", main="FMU")
+points(x=x, y=Ueq(x), col="green3", type="l", lwd=3)
+points(x=X, y=Y[nrow(Y),2:length(x)+1], col="blue", pch=20, cex=1)
+abline(v=X, col="grey")
